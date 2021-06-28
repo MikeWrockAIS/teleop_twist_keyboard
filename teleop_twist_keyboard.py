@@ -79,6 +79,7 @@ class PublishThread(threading.Thread):
         self.turn = 0.0
         self.condition = threading.Condition()
         self.done = False
+        self.skip_pub = False
 
         # Set timeout to None if rate is 0 (causes new_message to wait forever
         # for new data to publish)
@@ -100,7 +101,7 @@ class PublishThread(threading.Thread):
         if rospy.is_shutdown():
             raise Exception("Got shutdown request before subscribers connected")
 
-    def update(self, x, y, z, th, speed, turn):
+    def update(self, x, y, z, th, speed, turn, skip_pub):
         self.condition.acquire()
         self.x = x
         self.y = y
@@ -108,13 +109,14 @@ class PublishThread(threading.Thread):
         self.th = th
         self.speed = speed
         self.turn = turn
+        self.skip_pub = skip_pub
         # Notify publish thread that we have a new message.
         self.condition.notify()
         self.condition.release()
 
     def stop(self):
         self.done = True
-        self.update(0, 0, 0, 0, 0, 0)
+        self.update(0, 0, 0, 0, 0, 0, False)
         self.join()
 
     def run(self):
@@ -135,7 +137,8 @@ class PublishThread(threading.Thread):
             self.condition.release()
 
             # Publish.
-            self.publisher.publish(twist)
+            if not self.skip_pub:
+                self.publisher.publish(twist)
 
         # Publish stop message when thread exits.
         twist.linear.x = 0
@@ -183,7 +186,7 @@ if __name__=="__main__":
 
     try:
         pub_thread.wait_for_subscribers()
-        pub_thread.update(x, y, z, th, speed, turn)
+        pub_thread.update(x, y, z, th, speed, turn, False)
 
         print(msg)
         print(vels(speed,turn))
@@ -194,6 +197,7 @@ if __name__=="__main__":
                 y = moveBindings[key][1]
                 z = moveBindings[key][2]
                 th = moveBindings[key][3]
+                skip_pub = False
             elif key in speedBindings.keys():
                 speed = speed * speedBindings[key][0]
                 turn = turn * speedBindings[key][1]
@@ -202,6 +206,7 @@ if __name__=="__main__":
                 if (status == 14):
                     print(msg)
                 status = (status + 1) % 15
+                skip_pub = True
             else:
                 # Skip updating cmd_vel if key timeout and robot already
                 # stopped.
@@ -211,10 +216,11 @@ if __name__=="__main__":
                 y = 0
                 z = 0
                 th = 0
+                skip_pub = False
                 if (key == '\x03'):
                     break
  
-            pub_thread.update(x, y, z, th, speed, turn)
+            pub_thread.update(x, y, z, th, speed, turn, skip_pub)
 
     except Exception as e:
         print(e)
